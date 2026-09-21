@@ -15,6 +15,9 @@ id: T12345678
 title: Example theorem
 description: An example.
 tags: [example]
+references:
+  - https://en.wikipedia.org/wiki/Example
+  - https://arxiv.org/abs/1234.5678
 status: open
 -/
 `)
@@ -30,6 +33,29 @@ tags:
 	result := Check(root)
 	if result.Files != 2 || len(result.Errors) != 0 {
 		t.Fatalf("Check() = %+v", result)
+	}
+}
+
+func TestCheckRejectsUnsafeReferences(t *testing.T) {
+	root := t.TempDir()
+	writeEntry(t, root, "OEFP/D12/D1234/D123456/D12345678.lean", `/-!
+id: D12345678
+title: Example definition
+description: An example.
+tags: [example]
+references:
+  - http://en.wikipedia.org/wiki/Example
+  - https://wikipedia.org.evil.example/Example
+  - https://arxiv.org/abs/1234.5678
+  - https://arxiv.org/abs/1234.5678
+-/
+`)
+	result := Check(root)
+	joined := strings.Join(result.Errors, "\n")
+	for _, want := range []string{"HTTPS URL on a trusted host", "duplicate URL"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("errors do not contain %q:\n%s", want, joined)
+		}
 	}
 }
 

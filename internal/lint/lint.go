@@ -3,6 +3,7 @@ package lint
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,7 +21,12 @@ var (
 
 var allowedFields = map[string]bool{
 	"id": true, "title": true, "aliases": true, "description": true,
-	"tags": true, "status": true,
+	"tags": true, "references": true, "status": true,
+}
+
+var trustedReferenceHosts = []string{
+	"wikipedia.org",
+	"arxiv.org",
 }
 
 // Result describes one lint run. Errors are returned in stable path and field
@@ -135,6 +141,9 @@ func validateFrontmatter(path, relative, entryID string) []string {
 	if node := fields["tags"]; node != nil {
 		errors = append(errors, validateStringList(relative, "tags", node, true)...)
 	}
+	if node := fields["references"]; node != nil {
+		errors = append(errors, validateReferences(relative, node)...)
+	}
 	status := fields["status"]
 	metadataID := fields["id"]
 	if metadataID != nil && metadataID.Kind == yaml.ScalarNode && strings.HasPrefix(metadataID.Value, "T") && status == nil {
@@ -144,6 +153,37 @@ func validateFrontmatter(path, relative, entryID string) []string {
 		errors = append(errors, fmt.Sprintf("%s: invalid front matter at status: must be %q or %q", relative, "proved", "open"))
 	}
 	return errors
+}
+
+func validateReferences(relative string, node *yaml.Node) []string {
+	if listErrors := validateStringList(relative, "references", node, true); len(listErrors) != 0 {
+		return listErrors
+	}
+	seen := make(map[string]struct{}, len(node.Content))
+	var errors []string
+	for _, item := range node.Content {
+		reference := strings.TrimSpace(item.Value)
+		parsed, err := url.Parse(reference)
+		if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Hostname() == "" || parsed.Port() != "" || !trustedReferenceHost(parsed.Hostname()) {
+			errors = append(errors, fmt.Sprintf("%s: invalid front matter at references: %q must be an HTTPS URL on a trusted host", relative, item.Value))
+			continue
+		}
+		if _, duplicate := seen[reference]; duplicate {
+			errors = append(errors, fmt.Sprintf("%s: invalid front matter at references: duplicate URL %q", relative, reference))
+		}
+		seen[reference] = struct{}{}
+	}
+	return errors
+}
+
+func trustedReferenceHost(host string) bool {
+	host = strings.ToLower(host)
+	for _, trusted := range trustedReferenceHosts {
+		if host == trusted || strings.HasSuffix(host, "."+trusted) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateStringList(relative, field string, node *yaml.Node, nonempty bool) []string {
